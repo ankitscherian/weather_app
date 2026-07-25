@@ -1,0 +1,97 @@
+name: Snapshot
+
+on:
+  push:
+    branches: ['**']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compile
+        run: ./gradlew compileJava
+
+  unit-tests:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run unit tests
+        run: ./gradlew test jacocoTestReport
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results-${{ github.sha }}
+          path: build/reports/tests/test
+
+  docker-image:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Determine version and image tag
+        id: meta
+        run: |
+          version=$(./gradlew -q properties | grep "^version:" | awk '{print $2}')
+          short_sha=$(git rev-parse --short HEAD)
+          image_tag="weather-app:${version}-${short_sha}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "image_tag=$image_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Build jar
+        run: ./gradlew bootJar
+
+      - name: Build docker image
+        run: docker build -t "${{ steps.meta.outputs.image_tag }}" .
+
+      - name: Show version and image tag
+        run: |
+          {
+            echo "### Snapshot image built"
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| App version | ${{ steps.meta.outputs.version }} |"
+            echo "| Image tag | ${{ steps.meta.outputs.image_tag }} |"
+            echo "| Commit | ${{ github.sha }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Image tag: ${{ steps.meta.outputs.image_tag }}"
+          echo "Version: ${{ steps.meta.outputs.version }}"
